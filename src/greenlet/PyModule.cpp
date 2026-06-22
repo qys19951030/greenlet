@@ -186,6 +186,130 @@ mod_enable_optional_cleanup(PyObject* UNUSED(module), PyObject* flag)
     Py_RETURN_NONE;
 }
 
+PyDoc_STRVAR(mod_get_cleanup_state_doc,
+             "get_cleanup_state() -> dict\n"
+             "\n"
+             "Return diagnostic information about greenlet cleanup state.\n"
+             "\n"
+             "This function provides a consolidated view of internal greenlet cleanup\n"
+             "state, suitable for debugging issues with delayed cleanup after thread exit\n"
+             "or excessive overhead from optional cleanup operations.\n"
+             "\n"
+             "The returned dictionary contains the following keys:\n"
+             "\n"
+             "- ``pending_cleanup``: The number of thread states currently queued for\n"
+             "  cleanup. When a thread exits, its greenlet state is added to this queue\n"
+             "  and processed asynchronously by a pending callback.\n"
+             "\n"
+             "- ``main_greenlets``: The total number of main greenlets currently in\n"
+             "  existence across all threads. Each OS thread that uses greenlets gets\n"
+             "  exactly one main greenlet.\n"
+             "\n"
+             "- ``optional_cleanup_enabled``: Boolean indicating whether optional\n"
+             "  cleanup (the post-thread-exit leak detection that calls Python's GC)\n"
+             "  is currently enabled.\n"
+             "\n"
+             "- ``optional_cleanup_clocks``: The total number of processor clock ticks\n"
+             "  spent performing optional cleanup. Only valid when\n"
+             "  ``optional_cleanup_enabled`` is True; when optional cleanup is disabled,\n"
+             "  this value is ``None`` (not 0) to clearly indicate that the metric is\n"
+             "  currently unavailable.\n"
+             "\n"
+             "- ``clocks_per_sec``: The value of ``CLOCKS_PER_SEC`` for this platform,\n"
+             "  used to convert ``optional_cleanup_clocks`` into seconds.\n"
+             "\n"
+             "This is a stable public API. For more details on optional cleanup, see\n"
+             ":func:`enable_optional_cleanup` and :func:`get_clocks_used_doing_optional_cleanup`.\n"
+             "\n"
+             ".. versionadded:: 3.6\n"
+             );
+static PyObject*
+mod_get_cleanup_state(PyObject* UNUSED(module))
+{
+    PyObject* result = PyDict_New();
+    if (!result) {
+        return nullptr;
+    }
+
+    // pending_cleanup
+    size_t pending_count;
+    {
+        LockGuard cleanup_lock(*mod_globs->thread_states_to_destroy_lock);
+        pending_count = mod_globs->thread_states_to_destroy.size();
+    }
+    PyObject* py_pending = PyLong_FromSize_t(pending_count);
+    if (!py_pending) {
+        Py_DECREF(result);
+        return nullptr;
+    }
+    if (PyDict_SetItemString(result, "pending_cleanup", py_pending) < 0) {
+        Py_DECREF(py_pending);
+        Py_DECREF(result);
+        return nullptr;
+    }
+    Py_DECREF(py_pending);
+
+    // main_greenlets
+    PyObject* py_main = PyLong_FromSize_t(G_TOTAL_MAIN_GREENLETS);
+    if (!py_main) {
+        Py_DECREF(result);
+        return nullptr;
+    }
+    if (PyDict_SetItemString(result, "main_greenlets", py_main) < 0) {
+        Py_DECREF(py_main);
+        Py_DECREF(result);
+        return nullptr;
+    }
+    Py_DECREF(py_main);
+
+    // optional_cleanup_enabled / optional_cleanup_clocks
+    std::clock_t clocks = ThreadState::clocks_used_doing_gc();
+    bool enabled = (clocks != std::clock_t(-1));
+
+    PyObject* py_enabled = enabled ? Py_True : Py_False;
+    Py_INCREF(py_enabled);
+    if (PyDict_SetItemString(result, "optional_cleanup_enabled", py_enabled) < 0) {
+        Py_DECREF(py_enabled);
+        Py_DECREF(result);
+        return nullptr;
+    }
+    Py_DECREF(py_enabled);
+
+    PyObject* py_clocks;
+    if (enabled) {
+        py_clocks = PyLong_FromSsize_t(clocks);
+    }
+    else {
+        py_clocks = Py_None;
+        Py_INCREF(py_clocks);
+    }
+    if (!py_clocks) {
+        Py_DECREF(result);
+        return nullptr;
+    }
+    if (PyDict_SetItemString(result, "optional_cleanup_clocks", py_clocks) < 0) {
+        Py_DECREF(py_clocks);
+        Py_DECREF(result);
+        return nullptr;
+    }
+    Py_DECREF(py_clocks);
+
+    // clocks_per_sec
+    PyObject* py_cps = PyLong_FromLong(CLOCKS_PER_SEC);
+    if (!py_cps) {
+        Py_DECREF(result);
+        return nullptr;
+    }
+    if (PyDict_SetItemString(result, "clocks_per_sec", py_cps) < 0) {
+        Py_DECREF(py_cps);
+        Py_DECREF(result);
+        return nullptr;
+    }
+    Py_DECREF(py_cps);
+
+    return result;
+}
+
 
 
 
@@ -258,6 +382,12 @@ static PyMethodDef GreenMethods[] = {
       .ml_meth=(PyCFunction)mod_enable_optional_cleanup,
       .ml_flags=METH_O,
       .ml_doc=mod_enable_optional_cleanup_doc
+    },
+    {
+      .ml_name="get_cleanup_state",
+      .ml_meth=(PyCFunction)mod_get_cleanup_state,
+      .ml_flags=METH_NOARGS,
+      .ml_doc=mod_get_cleanup_state_doc
     },
 #if !GREENLET_PY313
     {

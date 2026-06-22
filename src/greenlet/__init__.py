@@ -15,6 +15,10 @@ __all__ = [
 
     'gettrace',
     'settrace',
+
+    'get_cleanup_state',
+    'enable_optional_cleanup',
+    'CLOCKS_PER_SEC',
 ]
 
 # pylint:disable=no-name-in-module
@@ -58,5 +62,6 @@ from ._greenlet import GREENLET_USE_TRACING # pylint:disable=unused-import
 from ._greenlet import CLOCKS_PER_SEC # pylint:disable=unused-import
 from ._greenlet import enable_optional_cleanup # pylint:disable=unused-import
 from ._greenlet import get_clocks_used_doing_optional_cleanup # pylint:disable=unused-import
+from ._greenlet import get_cleanup_state # pylint:disable=unused-import
 
 # Other APIS in the _greenlet module are for test support.
