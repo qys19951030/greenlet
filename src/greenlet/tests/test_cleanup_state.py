@@ -228,6 +228,143 @@ class TestGetCleanupState(TestCase):
         else:
             self.assertIsNone(state['optional_cleanup_clocks'])
 
+    # ------------------------------------------------------------------
+    # Documentation / help-text consistency tests
+    # ------------------------------------------------------------------
+
+    # Internal names that must NOT appear in the public-facing docstrings.
+    _FORBIDDEN_IN_PUBLIC_DOC = {
+        'mod_enable_optional_cleanup',
+        'get_clocks_used_doing_optional_cleanup',
+    }
+
+    # Public API entry points whose docstrings we audit.
+    _PUBLIC_APIS = (
+        greenlet.get_cleanup_state,
+        greenlet.enable_optional_cleanup,
+    )
+
+    def test_public_docstrings_contain_no_internal_names(self):
+        """
+        The public-facing help text must not leak internal C function
+        names such as ``mod_enable_optional_cleanup``, nor point users
+        at the private ``get_clocks_used_doing_optional_cleanup``
+        helper.
+        """
+        for api in self._PUBLIC_APIS:
+            doc = api.__doc__ or ''
+            for forbidden in self._FORBIDDEN_IN_PUBLIC_DOC:
+                self.assertNotIn(
+                    forbidden,
+                    doc,
+                    msg="%s.__doc__ must not reference internal name %r"
+                        % (api.__name__, forbidden),
+                )
+
+    def test_public_docstrings_describe_cpu_time_not_wallclock(self):
+        """
+        The docstrings for the cleanup diagnostics API must clearly
+        characterise the clock counter as processor / CPU time and
+        explicitly distinguish it from wall-clock time.
+        """
+        import re
+
+        # The primary description lives on get_cleanup_state.
+        doc = greenlet.get_cleanup_state.__doc__ or ''
+
+        # Must mention processor or CPU time (both acceptable, case-insensitive).
+        self.assertTrue(
+            ('processor' in doc.lower() and 'clock' in doc.lower())
+            or 'cpu' in doc.lower(),
+            msg="get_cleanup_state.__doc__ should describe the counter in terms"
+                " of processor/CPU clock ticks, not wall-clock time.\nGot: %r"
+                % doc,
+        )
+
+        # Must NOT *positively claim* the counter measures wall-clock time.
+        # It's fine (and desirable) for the docstring to say it is NOT
+        # wall-clock time. We strip markdown emphasis markers ("**") before
+        # searching so that bolded "**not**" is treated the same as "not".
+        doc_normalised = (
+            doc.lower()
+            .replace('wall clock', 'wall-clock')
+            .replace('**', '')
+        )
+        # Patterns that positively equate the counter with wall-clock time.
+        # We deliberately avoid matching "... not wall-clock time ...".
+        positive_wallclock_re = re.compile(
+            r'(?<!not )wall-clock (time|seconds)',
+        )
+        match = positive_wallclock_re.search(doc_normalised)
+        self.assertIsNone(
+            match,
+            msg="get_cleanup_state.__doc__ must not characterise the"
+                " optional_cleanup_clocks counter as wall-clock time."
+                " Found %r in:\n%r" % (match.group(0) if match else None, doc),
+        )
+
+        # The docstring *should* explicitly warn that it is NOT wall-clock time.
+        self.assertIn(
+            'not wall-clock',
+            doc_normalised,
+            msg="get_cleanup_state.__doc__ should explicitly state that the"
+                " counter is NOT wall-clock time, to avoid confusion.\nGot: %r"
+                % doc,
+        )
+
+        # enable_optional_cleanup docstring should also mention processor/CPU
+        # or point back to get_cleanup_state for the timing semantics.
+        enable_doc = greenlet.enable_optional_cleanup.__doc__ or ''
+        mentions_cpu = (
+            ('processor' in enable_doc.lower() and 'time' in enable_doc.lower())
+            or 'cpu' in enable_doc.lower()
+        )
+        mentions_get_cleanup_state = 'get_cleanup_state' in enable_doc
+        self.assertTrue(
+            mentions_cpu or mentions_get_cleanup_state,
+            msg="enable_optional_cleanup.__doc__ should either describe the"
+                " processor-time nature of the counter itself, or direct the"
+                " reader to get_cleanup_state() which does.\nGot: %r"
+                % enable_doc,
+        )
+
+    def test_public_apis_refer_to_each_other_not_private_helpers(self):
+        """
+        Cross-references inside the public docstrings should stay
+        within the public API surface — they must point at
+        ``get_cleanup_state`` / ``enable_optional_cleanup``, not at
+        private helpers in ``_greenlet``.
+        """
+        for api in self._PUBLIC_APIS:
+            doc = api.__doc__ or ''
+            # Should mention at least one stable public name.
+            mentions_public = any(
+                name in doc
+                for name in ('get_cleanup_state', 'enable_optional_cleanup')
+            )
+            self.assertTrue(
+                mentions_public,
+                msg="%s.__doc__ should cross-reference the other public"
+                    " cleanup-diagnostics functions, not private helpers."
+                    % api.__name__,
+            )
+            # Absolutely no mentions of the private helper.
+            self.assertNotIn(
+                'get_clocks_used_doing_optional_cleanup',
+                doc,
+            )
+
+    def test_enable_optional_cleanup_signature_line_uses_public_name(self):
+        """
+        The first line of enable_optional_cleanup's docstring (the
+        signature line shown by ``help()``) must display the public
+        name ``enable_optional_cleanup``, not an internal C name.
+        """
+        doc = greenlet.enable_optional_cleanup.__doc__ or ''
+        first_line = doc.splitlines()[0] if doc else ''
+        self.assertIn('enable_optional_cleanup', first_line)
+        self.assertNotIn('mod_', first_line)
+
 
 if __name__ == '__main__':
     import unittest

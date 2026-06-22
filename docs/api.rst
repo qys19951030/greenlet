@@ -104,30 +104,30 @@ Beginning in greenlet 2.0, when a thread exits, greenlet attempts to
 find and clean up leaked references to the thread's main greenlet
 (which might otherwise be kept alive by dangling references on the C
 stack). This is called *optional cleanup* because it involves invoking
-Python's garbage collector, which can have a measurable performance
-cost in programs with large heaps.
+Python's garbage collector, which consumes processor (CPU) time
+proportional to the size of the live heap.
 
-The functions and constant documented here let you query and control
-that optional cleanup machinery, as well as inspect the overall state
-of greenlet cleanup across your process. These are useful for
-diagnosing memory leaks, delayed cleanup after threads exit, or
-unexpected overhead in long-running programs.
+The functions and constant documented here are the **public, supported
+API** for querying and controlling that optional cleanup machinery,
+as well as inspecting the overall state of greenlet cleanup across
+your process. They are useful for diagnosing memory leaks, delayed
+cleanup after threads exit, or unexpected CPU overhead in long-running
+programs.
 
 .. autofunction:: get_cleanup_state
 
-   The :func:`get_cleanup_state` function is the recommended entry
-   point for cleanup diagnostics. It returns a single dictionary with
-   the following keys:
+   :func:`get_cleanup_state` is the recommended single entry point
+   for cleanup diagnostics. It returns a dictionary with the
+   following keys:
 
    ``pending_cleanup``
       The number of thread states currently waiting to be cleaned up.
-      When an OS thread that used greenlets exits, its
-      :class:`ThreadState` is placed onto an internal queue and
-      destroyed asynchronously on a Python pending callback. If this
-      number grows without bound, it usually indicates that the
-      pending callback is not being given a chance to run (for
-      example, if the main thread is blocked in a non-Python system
-      call).
+      When an OS thread that used greenlets exits, its internal
+      :class:`ThreadState` is placed onto a queue and destroyed
+      asynchronously via a Python pending callback. If this number
+      grows without bound, the pending callback is not being given a
+      chance to run — for example, because the main thread is blocked
+      in a non-Python system call.
 
    ``main_greenlets``
       The total number of main greenlets currently alive. Each OS
@@ -138,37 +138,42 @@ unexpected overhead in long-running programs.
 
    ``optional_cleanup_enabled``
       Whether the optional post-thread-exit cleanup is currently
-      enabled. This can be toggled at runtime with
+      enabled. Toggle this at runtime with
       :func:`enable_optional_cleanup`.
 
    ``optional_cleanup_clocks``
-      The total number of processor clock ticks spent performing
-      optional cleanup since the process started. When
-      ``optional_cleanup_enabled`` is ``False``, this field is
+      The total number of **processor (CPU) clock ticks** spent
+      performing optional cleanup since the process started. This is
+      a measure of *CPU time*, **not wall-clock time**, comparable
+      to what the old ``time.clock()`` function returned. When
+      ``optional_cleanup_enabled`` is ``False`` this field is
       ``None`` — **not** ``0`` — because the counter is stopped and
-      the value is not meaningful. Divide by :data:`CLOCKS_PER_SEC`
-      to get wall-clock seconds.
+      the metric is not meaningful. Divide by
+      :data:`CLOCKS_PER_SEC` to convert to CPU-seconds.
 
    ``clocks_per_sec``
       The value of the C constant ``CLOCKS_PER_SEC`` for this
       platform, provided for convenience so callers do not have to
-      import :mod:`time` or ``greenlet.CLOCKS_PER_SEC`` separately.
+      import ``greenlet.CLOCKS_PER_SEC`` separately. Divide
+      ``optional_cleanup_clocks`` by this number to get
+      CPU-seconds.
 
 .. autofunction:: enable_optional_cleanup
 
    :param enabled: If true, optional cleanup is turned on (or left
-                   on if already running) and the clock counter is
-                   reset to zero only if it was previously stopped.
+                   on if already running). If the counter had
+                   previously been stopped it is reset to zero.
                    If false, optional cleanup is disabled and
-                   :func:`get_cleanup_state` will report
+                   :func:`get_cleanup_state` reports
                    ``optional_cleanup_clocks`` as ``None``.
 
 .. autodata:: CLOCKS_PER_SEC
 
    The value of the C preprocessor constant ``CLOCKS_PER_SEC`` on
-   the platform where this module was compiled. Pass to
-   ``time.clock()``-style values (such as
-   ``optional_cleanup_clocks``) to convert them into seconds.
+   the platform where this module was compiled. This is the number
+   of processor-clock ticks per second, matching the unit used by
+   ``optional_cleanup_clocks``. Divide a tick count by this value
+   to obtain CPU-seconds.
 
    >>> import greenlet
    >>> isinstance(greenlet.CLOCKS_PER_SEC, int)
